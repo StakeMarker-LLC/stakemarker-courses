@@ -127,6 +127,53 @@ connected clients. If the app mirrors courses into Firestore at all:
 - if per-course lookup inside Firestore is genuinely needed, a Firestore
   **data bundle** served via CDN gives query semantics without per-client reads.
 
+### 7. Cloud Functions invocation costs (added on request)
+
+Billing meters that apply to Firebase Functions (2nd gen runs on Cloud Run;
+published US pricing, free tier per month in parentheses):
+
+| Meter | Rate | Free tier |
+|---|---|---|
+| Invocations / requests | $0.40 per million | 2M |
+| Compute — CPU | ~$0.000024 per vCPU-second | 180k vCPU-s |
+| Compute — memory | ~$0.0000025 per GiB-second | 360k GiB-s |
+| Outbound networking | $0.12/GB | 5 GB |
+| `minInstances` idle time | billed continuously; ≈ $6–12/mo per always-warm instance | none |
+| Cloud Scheduler | $0.10 per job/month | 3 jobs |
+| Cloud Logging | $0.50/GiB ingested | 50 GiB |
+| Artifact Registry (deploy images) | ~$0.10/GB-month | 0.5 GB |
+
+**Scale check:** invocations alone are effectively free at golf-app scale.
+A per-score-write trigger for a foursome is ~150 invocations/round; even
+100 rounds/day ≈ 450k invocations/mo — inside the free tier, and ~$0.18/mo
+beyond it. If the Functions line item on the bill is non-trivial, it is a
+*pattern* problem, not organic load. The patterns that actually move it:
+
+1. **`minInstances` > 0** — a single always-warm instance costs more per
+   month than millions of invocations. Verify every function that sets it.
+2. **Cascading / recursive triggers** — an `onDocumentWritten` handler that
+   writes back to a document matching its own (or another function's)
+   trigger path. This is the classic runaway-bill bug; it also multiplies
+   Firestore writes and every client listener's reads.
+3. **Retry storms** — event triggers deployed with retries enabled will loop
+   indefinitely on a permanently-failing event (bad data, thrown exception).
+4. **Fan-out writes inside triggers** — a leaderboard recompute that writes N
+   docs per score turns 1 write into N+1 writes plus N×listeners reads.
+5. **Slow/overweight functions** — compute is billed in vCPU/GiB-seconds, so
+   a 2 s, 1 GiB handler costs ~20× a 200 ms, 256 MiB one. Also check the
+   function region matches the Firestore region (cross-region = egress).
+6. **Callable functions used as a read proxy** — routing reads through a
+   function adds invocation + compute on top of the same Firestore read the
+   client could do directly under security rules.
+7. **Per-invocation logging** — chatty `console.log` at high volume can
+   exceed the 50 GiB logging free tier quietly.
+
+**Audit checklist for the app/functions repo:** enumerate every deployed
+function and for each record: trigger type & path, retry setting,
+`minInstances`/`memory`/`timeout`, what it writes (and whether any write can
+re-enter a trigger path), external calls, and log volume per invocation.
+Cross-reference against the Usage dashboard's invocation counts.
+
 ## Priority summary
 
 | # | Action | Where | Impact |
