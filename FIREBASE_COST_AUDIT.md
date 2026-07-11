@@ -2,6 +2,18 @@
 
 **Date:** 2026-07-11 · **Scope:** `stakemarker-llc/stakemarker-courses` (read-only; no data files were modified)
 
+> **Update (same day):** Owner clarified the architecture: the site is served
+> from **Cloudflare** (not GitHub Pages / Firebase Hosting), iOS/Android cache
+> all HTML/CSS until out of date, and Firebase handles **only auth and
+> round syncing**. That confirms distribution of this dataset costs Firebase
+> $0 — Findings 3/4 below are Cloudflare-bandwidth and client-bandwidth
+> concerns only, not Blaze line items. Finding 1 (no-op version churn) still
+> matters: it defeats the mobile HTML/CSS/data cache and forces spurious
+> re-downloads. The remaining Blaze cost surface is **Firestore/RTDB
+> operations for live rounds + sync and Auth**, which live in the app repo
+> (out of this session's scope) — see the companion notes in the session for
+> the live-round audit checklist.
+
 This repo holds the derived golf-course dataset consumed by the StakeMarker app.
 The app / functions repo was not in session scope, so client-side consumption is
 inferred from what this repo exposes; each finding lists what to verify there.
