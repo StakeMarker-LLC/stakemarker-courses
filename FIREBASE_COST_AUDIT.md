@@ -174,6 +174,50 @@ function and for each record: trigger type & path, retry setting,
 re-enter a trigger path), external calls, and log volume per invocation.
 Cross-reference against the Usage dashboard's invocation counts.
 
+### 8. Correction: live rounds run on Realtime Database, not Firestore
+
+Owner confirmed the app syncs via **RTDB**. RTDB bills only two meters —
+**storage ($5/GB-month)** and **download ($5/GB, including SSL/protocol
+overhead)** — and on Blaze there is **no free RTDB allowance**: billing
+starts at the first byte. There are no per-operation charges, so the
+Firestore read/write math in §3 and §6 does not apply to round sync.
+What this changes:
+
+- **Writes are free.** High-frequency writes (presence, GPS pings) cost
+  nothing directly — their cost is the download they trigger on every
+  *other* device listening to that path, plus per-message protocol overhead.
+- **Listener scope is the entire cost model.** Attaching a listener
+  downloads the whole node once, then streams deltas for any change under
+  it. The dominant RTDB anti-pattern is listening high in the tree
+  (`/games`, `/rounds`, `/users`) so every device downloads the initial
+  subtree and then receives every other user's changes. Listeners must sit
+  on the narrowest node that matters (`/rounds/{roundId}`, ideally split
+  hot child paths like `/rounds/{id}/scores`).
+- **Reconnect churn matters.** Phones on a golf course drop connections
+  constantly; each reconnect re-establishes listeners against the listened
+  node. Keep listened nodes small and enable SDK disk persistence so
+  unchanged data isn't re-shipped. Audit any `keepSynced(true)` — it holds
+  broad paths in permanent sync.
+- **Fat round nodes multiply everything.** If the round node embeds the
+  course scorecard, player profiles, or chat alongside live scores, every
+  initial attach and many deltas ship those bytes too. Course/static data
+  belongs on Cloudflare (already free), never in RTDB.
+- **Storage is likely negligible** (rounds are small JSON) *unless* GPS
+  tracks or history accumulate unbounded — at $5/GB-month forever, archive
+  or prune old rounds if they grow.
+
+**Ballpark:** a foursome's live round with narrow listeners is roughly
+0.5–2 MB total wire traffic across all four devices ⇒ $0.0025–0.01 per
+round; 100 rounds/day ≈ **$7.50–30/month**. A download line item well above
+that scale indicates a broad listener, a fat node, or static data being
+served out of RTDB.
+
+**Diagnostic:** run `firebase database:profile` against production for a few
+minutes during live play — it breaks down downloaded bytes by path and
+immediately identifies which node is the spender. RTDB-triggered Cloud
+Functions should live in the RTDB instance's region (classic instances:
+`us-central1`) to avoid cross-region egress.
+
 ## Priority summary
 
 | # | Action | Where | Impact |
